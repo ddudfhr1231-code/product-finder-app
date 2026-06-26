@@ -326,112 +326,229 @@ def get_date_filtered_df(df, date_col, selected_date):
 
     return temp[temp[date_col] == selected_date]
 
-
 def render_finance_calendar(sales_df, expense_df, purchase_df):
     st.subheader("재무 달력")
-    st.caption("날짜를 누르면 그날 매출/지출/구매 내역이 아래에 표시됩니다.")
+    st.caption("일요일 시작 월간 달력입니다. 날짜 칸 안에 수입, 지출, 총합이 표시되고 날짜를 누르면 아래에 상세 내역이 뜹니다.")
 
     today = date.today()
 
-    cal_col1, cal_col2 = st.columns(2)
+    if "finance_calendar_year" not in st.session_state:
+        st.session_state["finance_calendar_year"] = today.year
 
-    with cal_col1:
+    if "finance_calendar_month" not in st.session_state:
+        st.session_state["finance_calendar_month"] = today.month
+
+    top1, top2, top3, top4 = st.columns([1, 1, 1, 3])
+
+    with top1:
         selected_year = st.number_input(
-            "연도",
+            "년도",
             min_value=2020,
             max_value=2100,
-            value=today.year,
-            step=1
+            value=int(st.session_state["finance_calendar_year"]),
+            step=1,
+            key="finance_year_input"
         )
 
-    with cal_col2:
+    with top2:
         selected_month = st.selectbox(
             "월",
             list(range(1, 13)),
-            index=today.month - 1
+            index=int(st.session_state["finance_calendar_month"]) - 1,
+            key="finance_month_select"
         )
 
-    selected_year = int(selected_year)
-    selected_month = int(selected_month)
+    with top3:
+        if st.button("이번 달 보기"):
+            st.session_state["finance_calendar_year"] = today.year
+            st.session_state["finance_calendar_month"] = today.month
+            st.session_state["selected_finance_date"] = str(today)
+            st.rerun()
+
+    st.session_state["finance_calendar_year"] = int(selected_year)
+    st.session_state["finance_calendar_month"] = int(selected_month)
+
+    selected_year = int(st.session_state["finance_calendar_year"])
+    selected_month = int(st.session_state["finance_calendar_month"])
 
     daily_totals = {}
 
+    # 매출: +
     if not sales_df.empty and "sale_date" in sales_df.columns:
         temp_sales = sales_df.copy()
         temp_sales["sale_date"] = pd.to_datetime(temp_sales["sale_date"], errors="coerce").dt.date
 
         for _, row in temp_sales.iterrows():
             d = row.get("sale_date")
-            if pd.isna(d):
+
+            if pd.isna(d) or d is None:
                 continue
 
             key = str(d)
 
             if key not in daily_totals:
-                daily_totals[key] = {"income": 0, "outgo": 0}
+                daily_totals[key] = {
+                    "income": 0,
+                    "outgo": 0
+                }
 
             daily_totals[key]["income"] += as_float(row.get("gross_sales"), 0)
 
+    # 일반 지출: -
     if not expense_df.empty and "expense_date" in expense_df.columns:
         temp_expense = expense_df.copy()
         temp_expense["expense_date"] = pd.to_datetime(temp_expense["expense_date"], errors="coerce").dt.date
 
         for _, row in temp_expense.iterrows():
             d = row.get("expense_date")
-            if pd.isna(d):
+
+            if pd.isna(d) or d is None:
                 continue
 
             key = str(d)
 
             if key not in daily_totals:
-                daily_totals[key] = {"income": 0, "outgo": 0}
+                daily_totals[key] = {
+                    "income": 0,
+                    "outgo": 0
+                }
 
             daily_totals[key]["outgo"] += as_float(row.get("amount"), 0)
 
+    # 샘플/구매 지출: -
     if not purchase_df.empty and "purchase_date" in purchase_df.columns:
         temp_purchase = purchase_df.copy()
         temp_purchase["purchase_date"] = pd.to_datetime(temp_purchase["purchase_date"], errors="coerce").dt.date
 
         for _, row in temp_purchase.iterrows():
             d = row.get("purchase_date")
-            if pd.isna(d):
+
+            if pd.isna(d) or d is None:
                 continue
 
             key = str(d)
 
             if key not in daily_totals:
-                daily_totals[key] = {"income": 0, "outgo": 0}
+                daily_totals[key] = {
+                    "income": 0,
+                    "outgo": 0
+                }
 
             daily_totals[key]["outgo"] += as_float(row.get("total_purchase_cost"), 0)
 
     st.divider()
+    st.markdown(f"### {selected_year}년 {selected_month}월")
 
-    weekday_cols = st.columns(7)
-    weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+    # 요일 헤더: 일요일 시작
+    weekday_names = ["일", "월", "화", "수", "목", "금", "토"]
+    header_cols = st.columns(7)
 
-    for i, day_name in enumerate(weekdays):
-        weekday_cols[i].markdown(f"**{day_name}**")
+    for i, day_name in enumerate(weekday_names):
+        header_cols[i].markdown(
+            f"""
+            <div style="
+                text-align:center;
+                font-weight:700;
+                padding:8px 0;
+                border-bottom:1px solid #e5e7eb;
+            ">
+                {day_name}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-    month_calendar = calendar.monthcalendar(selected_year, selected_month)
+    # 일요일 시작 달력
+    cal = calendar.Calendar(firstweekday=6)
+    month_matrix = cal.monthdayscalendar(selected_year, selected_month)
 
-    for week in month_calendar:
+    for week in month_matrix:
         cols = st.columns(7)
 
-        for i, day_num in enumerate(week):
-            if day_num == 0:
-                cols[i].write("")
-                continue
+        for col_idx, day_num in enumerate(week):
+            with cols[col_idx]:
+                if day_num == 0:
+                    st.markdown(
+                        """
+                        <div style="
+                            height:150px;
+                            border:1px solid #eeeeee;
+                            border-radius:10px;
+                            background-color:#fafafa;
+                            margin-bottom:10px;
+                        "></div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    continue
 
-            current_date = date(selected_year, selected_month, day_num)
-            date_key = str(current_date)
+                current_date = date(selected_year, selected_month, day_num)
+                date_key = str(current_date)
 
-            income = daily_totals.get(date_key, {}).get("income", 0)
-            outgo = daily_totals.get(date_key, {}).get("outgo", 0)
+                income = daily_totals.get(date_key, {}).get("income", 0)
+                outgo = daily_totals.get(date_key, {}).get("outgo", 0)
+                net = income - outgo
 
-            label = f"{day_num}\n+{int(income):,}\n-{int(outgo):,}"
+                net_sign = "+" if net >= 0 else "-"
+                net_color = "#16a34a" if net >= 0 else "#dc2626"
 
-            if cols[i].button(label, key=f"finance_day_{date_key}"):
-                st.session_state["selected_finance_date"] = date_key
+                selected_style = ""
+                if st.session_state.get("selected_finance_date") == date_key:
+                    selected_style = "box-shadow:0 0 0 2px #2563eb inset;"
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        border:1px solid #d1d5db;
+                        border-radius:12px;
+                        padding:10px;
+                        height:150px;
+                        margin-bottom:6px;
+                        background-color:white;
+                        {selected_style}
+                    ">
+                        <div style="
+                            font-weight:800;
+                            font-size:17px;
+                            margin-bottom:12px;
+                            color:#111827;
+                        ">
+                            {day_num}
+                        </div>
+
+                        <div style="
+                            color:#2563eb;
+                            font-size:14px;
+                            line-height:1.5;
+                        ">
+                            +{int(income):,}
+                        </div>
+
+                        <div style="
+                            color:#dc2626;
+                            font-size:14px;
+                            line-height:1.5;
+                        ">
+                            -{int(outgo):,}
+                        </div>
+
+                        <div style="
+                            color:{net_color};
+                            font-weight:800;
+                            font-size:14px;
+                            line-height:1.5;
+                            margin-top:4px;
+                        ">
+                            총 {net_sign}{abs(int(net)):,}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                if st.button("날짜 선택", key=f"finance_day_{date_key}"):
+                    st.session_state["selected_finance_date"] = date_key
+                    st.rerun()
 
     if "selected_finance_date" not in st.session_state:
         st.session_state["selected_finance_date"] = str(today)
@@ -466,12 +583,15 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
         else 0
     )
 
-    d1, d2, d3, d4 = st.columns(4)
+    total_outgo = expense_total + purchase_total
+    net_total = income_total - total_outgo
 
-    d1.metric("수입", format_won(income_total))
-    d2.metric("일반 지출", format_won(expense_total))
-    d3.metric("샘플/구매 지출", format_won(purchase_total))
-    d4.metric("일 기준 잔액", format_won(income_total - expense_total - purchase_total))
+    detail1, detail2, detail3, detail4 = st.columns(4)
+
+    detail1.metric("수입", format_won(income_total))
+    detail2.metric("일반 지출", format_won(expense_total))
+    detail3.metric("샘플/구매 지출", format_won(purchase_total))
+    detail4.metric("총합", format_won(net_total))
 
     st.markdown("#### 매출 내역")
     show_df(selected_sales, "선택일매출")
@@ -483,6 +603,7 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
     show_df(selected_purchases, "선택일구매")
 
     return selected_date
+
 
 def to_df(records):
     if not records:
@@ -675,6 +796,11 @@ sales_df = to_df(sales)
 expense_df = to_df(expenses)
 
 cny_exchange_rate = get_setting_numeric("cny_exchange_rate", 195.0)
+
+selected_default_date = datetime.strptime(
+    st.session_state.get("selected_finance_date", str(date.today())),
+    "%Y-%m-%d"
+).date()
 
 tabs = st.tabs([
     "대시보드",
@@ -1323,7 +1449,7 @@ with tabs[3]:
                 purchase_product_id = selected_product.get("id")
                 st.write(f"상품명: **{purchase_product_name}**")
 
-            purchase_date = st.date_input("구매일", value=date.today())
+            purchase_date = st.date_input("구매일", value=selected_default_date)
             supplier = st.text_input("구매처", value="도매처")
             purchase_status = st.selectbox("구매 상태", PURCHASE_STATUS_OPTIONS)
 
@@ -1425,7 +1551,7 @@ with tabs[4]:
                 sale_product_name = selected_product.get("product_name", "")
                 st.write(f"상품명: **{sale_product_name}**")
 
-            sale_date = st.date_input("판매일", value=date.today())
+            sale_date = st.date_input("판매일", value=selected_default_date)
             channel = st.selectbox("판매 채널", SALES_CHANNEL_OPTIONS)
             sale_quantity = st.number_input("판매 수량", min_value=0, value=1, step=1)
 
@@ -1511,7 +1637,7 @@ with tabs[5]:
         x1, x2 = st.columns(2)
 
         with x1:
-            expense_date = st.date_input("지출일", value=date.today())
+            expense_date = st.date_input("지출일", value=selected_default_date)
             expense_category = st.selectbox("지출 카테고리", EXPENSE_CATEGORY_OPTIONS)
             description = st.text_input("지출 내용")
             amount = st.number_input("금액", min_value=0.0, value=0.0, step=100.0)
