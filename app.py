@@ -100,6 +100,16 @@ SALES_CHANNEL_OPTIONS = [
     "기타"
 ]
 
+SOURCE_SITE_OPTIONS = [
+    "1688",
+    "타오바오",
+    "알리바바",
+    "알리익스프레스",
+    "국내 도매몰",
+    "오프라인 도매처",
+    "기타"
+]
+
 
 # =========================
 # 공통 함수
@@ -353,7 +363,7 @@ def duplicate_warnings(db, product_url_1688, product_url_coupang):
                 .execute()
             )
             if res.data:
-                warnings.append(f"1688 URL 중복 가능: {res.data[0].get('product_name', '')}")
+                warnings.append(f"도매 상품 URL 중복 가능: {res.data[0].get('product_name', '')}")
 
         if product_url_coupang:
             res = (
@@ -515,7 +525,7 @@ with tabs[0]:
 
 with tabs[1]:
     st.title("상품 판정")
-    st.caption("1688 원가와 쿠팡 판매가를 넣고 상품성을 판정한 뒤 저장합니다.")
+    st.caption("도매 원가와 쿠팡 판매가를 넣고 상품성을 판정한 뒤 저장합니다.")
 
     with st.form("product_create_form"):
         st.subheader("상품 기본 정보")
@@ -525,7 +535,8 @@ with tabs[1]:
         with a1:
             product_name = st.text_input("상품명")
             category = st.selectbox("카테고리", CATEGORY_OPTIONS)
-            product_url_1688 = st.text_input("1688 URL")
+            source_site = st.selectbox("소싱처/도매처", SOURCE_SITE_OPTIONS)
+            product_url_1688 = st.text_input("도매 상품 URL")
             product_url_coupang = st.text_input("쿠팡 비교 URL")
             memo = st.text_area("파트너/등록 메모")
 
@@ -541,8 +552,8 @@ with tabs[1]:
         b1, b2, b3 = st.columns(3)
 
         with b1:
-            yuan_price = st.number_input("1688 원가 위안/개", min_value=0.0, value=10.0, step=1.0)
-            exchange_rate = st.number_input("환율 원/위안", min_value=0.0, value=195.0, step=1.0)
+            yuan_price = st.number_input("도매 원가", min_value=0.0, value=10.0, step=1.0)
+            exchange_rate = st.number_input("환율/환산값", min_value=0.0, value=195.0, step=1.0)
 
         with b2:
             china_shipping_krw = st.number_input("중국 내 배송비 원/개", min_value=0.0, value=0.0, step=100.0)
@@ -614,6 +625,8 @@ with tabs[1]:
                         "reviewed_by": current_name if final_memo or status != "1차 수집" else "",
                         "product_name": product_name.strip(),
                         "category": category,
+                        "source_site": source_site,
+                        "source_url": product_url_1688,
                         "status": status,
                         "product_url_1688": product_url_1688,
                         "product_url_coupang": product_url_coupang,
@@ -716,6 +729,8 @@ with tabs[2]:
             "created_at",
             "product_name",
             "category",
+            "source_site",
+            "source_url",
             "manager_name",
             "created_by",
             "updated_by",
@@ -731,7 +746,6 @@ with tabs[2]:
             "reject_reason",
             "memo",
             "final_memo",
-            "product_url_1688",
             "product_url_coupang"
         ]
 
@@ -757,6 +771,12 @@ with tabs[2]:
                     index=safe_select_index(CATEGORY_OPTIONS, as_text(selected.get("category"), "기타"), 0)
                 )
 
+                edit_source_site = st.selectbox(
+                    "소싱처/도매처",
+                    SOURCE_SITE_OPTIONS,
+                    index=safe_select_index(SOURCE_SITE_OPTIONS, as_text(selected.get("source_site"), "1688"), 0)
+                )
+                
                 edit_status = st.selectbox(
                     "진행상태",
                     STATUS_OPTIONS,
@@ -776,7 +796,11 @@ with tabs[2]:
                 )
 
             with e2:
-                edit_url_1688 = st.text_input("1688 URL", value=as_text(selected.get("product_url_1688")))
+                edit_url_1688 = st.text_input(
+                    "도매 상품 URL",
+                    value=as_text(selected.get("source_url") or selected.get("product_url_1688"))
+                )
+                
                 edit_url_coupang = st.text_input("쿠팡 URL", value=as_text(selected.get("product_url_coupang")))
 
                 edit_risk = st.multiselect(
@@ -841,6 +865,8 @@ with tabs[2]:
                 update_row = {
                     "product_name": edit_name,
                     "category": edit_category,
+                    "source_site": edit_source_site,
+                    "source_url": edit_url_1688.strip(),
                     "status": edit_status,
                     "reject_reason": edit_reject,
                     "competition_level": edit_competition,
@@ -923,7 +949,7 @@ with tabs[3]:
                 st.write(f"상품명: **{purchase_product_name}**")
 
             purchase_date = st.date_input("구매일", value=date.today())
-            supplier = st.text_input("구매처", value="1688")
+            supplier = st.text_input("구매처", value="도매처")
             purchase_status = st.selectbox("구매 상태", PURCHASE_STATUS_OPTIONS)
 
         with p2:
