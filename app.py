@@ -9,12 +9,13 @@ except Exception:
     create_client = None
 
 
+APP_NAME = "상품 소싱 운영툴이자 개쎈"
+
 st.set_page_config(
-    page_title="상품 소싱 운영툴이자 개쎈거",
+    page_title=APP_NAME,
     page_icon="📦",
     layout="wide"
 )
-
 
 # =========================
 # 기본 옵션
@@ -174,7 +175,7 @@ def current_user_name():
 
 
 def login_screen():
-    st.title("상품 소싱 운영툴")
+    st.sidebar.title(APP_NAME)
     st.caption("1688 상품 소싱, 샘플 구매, 매출, 지출, 손익을 한 곳에서 관리합니다.")
 
     accounts = load_accounts()
@@ -387,10 +388,7 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
             key = str(d)
 
             if key not in daily_totals:
-                daily_totals[key] = {
-                    "income": 0,
-                    "outgo": 0
-                }
+                daily_totals[key] = {"income": 0, "outgo": 0}
 
             daily_totals[key]["income"] += as_float(row.get("gross_sales"), 0)
 
@@ -408,10 +406,7 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
             key = str(d)
 
             if key not in daily_totals:
-                daily_totals[key] = {
-                    "income": 0,
-                    "outgo": 0
-                }
+                daily_totals[key] = {"income": 0, "outgo": 0}
 
             daily_totals[key]["outgo"] += as_float(row.get("amount"), 0)
 
@@ -429,36 +424,21 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
             key = str(d)
 
             if key not in daily_totals:
-                daily_totals[key] = {
-                    "income": 0,
-                    "outgo": 0
-                }
+                daily_totals[key] = {"income": 0, "outgo": 0}
 
             daily_totals[key]["outgo"] += as_float(row.get("total_purchase_cost"), 0)
 
     st.divider()
     st.markdown(f"### {selected_year}년 {selected_month}월")
 
-    # 요일 헤더: 일요일 시작
+    # 일요일 시작 요일 헤더
     weekday_names = ["일", "월", "화", "수", "목", "금", "토"]
     header_cols = st.columns(7)
 
     for i, day_name in enumerate(weekday_names):
-        header_cols[i].markdown(
-            f"""
-            <div style="
-                text-align:center;
-                font-weight:700;
-                padding:8px 0;
-                border-bottom:1px solid #e5e7eb;
-            ">
-                {day_name}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        header_cols[i].markdown(f"### {day_name}")
 
-    # 일요일 시작 달력
+    # 일요일 시작 월간 달력
     cal = calendar.Calendar(firstweekday=6)
     month_matrix = cal.monthdayscalendar(selected_year, selected_month)
 
@@ -468,18 +448,11 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
         for col_idx, day_num in enumerate(week):
             with cols[col_idx]:
                 if day_num == 0:
-                    st.markdown(
-                        """
-                        <div style="
-                            height:150px;
-                            border:1px solid #eeeeee;
-                            border-radius:10px;
-                            background-color:#fafafa;
-                            margin-bottom:10px;
-                        "></div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                    with st.container(border=True):
+                        st.write("")
+                        st.write("")
+                        st.write("")
+                        st.write("")
                     continue
 
                 current_date = date(selected_year, selected_month, day_num)
@@ -489,66 +462,20 @@ def render_finance_calendar(sales_df, expense_df, purchase_df):
                 outgo = daily_totals.get(date_key, {}).get("outgo", 0)
                 net = income - outgo
 
-                net_sign = "+" if net >= 0 else "-"
-                net_color = "#16a34a" if net >= 0 else "#dc2626"
+                with st.container(border=True):
+                    st.markdown(f"### {day_num}")
 
-                selected_style = ""
-                if st.session_state.get("selected_finance_date") == date_key:
-                    selected_style = "box-shadow:0 0 0 2px #2563eb inset;"
+                    st.markdown(f":blue[+{int(income):,}]")
+                    st.markdown(f":red[-{int(outgo):,}]")
 
-                st.markdown(
-                    f"""
-                    <div style="
-                        border:1px solid #d1d5db;
-                        border-radius:12px;
-                        padding:10px;
-                        height:150px;
-                        margin-bottom:6px;
-                        background-color:white;
-                        {selected_style}
-                    ">
-                        <div style="
-                            font-weight:800;
-                            font-size:17px;
-                            margin-bottom:12px;
-                            color:#111827;
-                        ">
-                            {day_num}
-                        </div>
+                    if net >= 0:
+                        st.markdown(f"**:green[총 +{int(net):,}]**")
+                    else:
+                        st.markdown(f"**:red[총 -{abs(int(net)):,}]**")
 
-                        <div style="
-                            color:#2563eb;
-                            font-size:14px;
-                            line-height:1.5;
-                        ">
-                            +{int(income):,}
-                        </div>
-
-                        <div style="
-                            color:#dc2626;
-                            font-size:14px;
-                            line-height:1.5;
-                        ">
-                            -{int(outgo):,}
-                        </div>
-
-                        <div style="
-                            color:{net_color};
-                            font-weight:800;
-                            font-size:14px;
-                            line-height:1.5;
-                            margin-top:4px;
-                        ">
-                            총 {net_sign}{abs(int(net)):,}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-                if st.button("날짜 선택", key=f"finance_day_{date_key}"):
-                    st.session_state["selected_finance_date"] = date_key
-                    st.rerun()
+                    if st.button("선택", key=f"finance_day_{date_key}", use_container_width=True):
+                        st.session_state["selected_finance_date"] = date_key
+                        st.rerun()
 
     if "selected_finance_date" not in st.session_state:
         st.session_state["selected_finance_date"] = str(today)
