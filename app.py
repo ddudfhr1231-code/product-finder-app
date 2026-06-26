@@ -349,27 +349,47 @@ def calculate_product(
         "judgment": judgment
     }
 
-
-def duplicate_warnings(db, product_url_1688, product_url_coupang):
+def duplicate_warnings(db, source_url, coupang_url):
     warnings = []
 
+    def is_real_url(value):
+        if not value:
+            return False
+
+        value = str(value).strip().lower()
+
+        ignore_values = [
+            "도매몰",
+            "도매처",
+            "국내 도매몰",
+            "오프라인 도매처",
+            "없음",
+            "x",
+            "-"
+        ]
+
+        if value in ignore_values:
+            return False
+
+        return value.startswith("http://") or value.startswith("https://")
+
     try:
-        if product_url_1688:
+        if is_real_url(source_url):
             res = (
                 db.table("product_records")
                 .select("id, product_name")
-                .eq("product_url_1688", product_url_1688)
+                .or_(f"source_url.eq.{source_url},product_url_1688.eq.{source_url}")
                 .limit(1)
                 .execute()
             )
             if res.data:
                 warnings.append(f"도매 상품 URL 중복 가능: {res.data[0].get('product_name', '')}")
 
-        if product_url_coupang:
+        if is_real_url(coupang_url):
             res = (
                 db.table("product_records")
                 .select("id, product_name")
-                .eq("product_url_coupang", product_url_coupang)
+                .eq("product_url_coupang", coupang_url)
                 .limit(1)
                 .execute()
             )
@@ -380,7 +400,6 @@ def duplicate_warnings(db, product_url_1688, product_url_coupang):
         pass
 
     return warnings
-
 
 def product_label(row):
     return f"{row.get('id')} | {row.get('product_name', '상품명 없음')} | {row.get('status', '')} | 담당자:{row.get('manager_name', '')}"
@@ -525,7 +544,7 @@ with tabs[0]:
 
 with tabs[1]:
     st.title("상품 판정")
-    st.caption("도매 원가와 쿠팡 판매가를 넣고 상품성을 판정한 뒤 저장합니다.")
+    st.caption("도매 원가와 쿠팡 판매가를 넣고 상품성을 판정한 뒤, 결과를 확인하고 저장합니다.")
 
     with st.form("product_create_form"):
         st.subheader("상품 기본 정보")
@@ -536,8 +555,8 @@ with tabs[1]:
             product_name = st.text_input("상품명")
             category = st.selectbox("카테고리", CATEGORY_OPTIONS)
             source_site = st.selectbox("소싱처/도매처", SOURCE_SITE_OPTIONS)
-            product_url_1688 = st.text_input("도매 상품 URL")
-            product_url_coupang = st.text_input("쿠팡 비교 URL")
+            source_url = st.text_input("도매 상품 URL", placeholder="링크가 없으면 비워두세요")
+            product_url_coupang = st.text_input("쿠팡 비교 URL", placeholder="링크가 없으면 비워두세요")
             memo = st.text_area("파트너/등록 메모")
 
         with a2:
@@ -547,7 +566,7 @@ with tabs[1]:
             final_memo = st.text_area("최종 메모")
             reject_reason = st.selectbox("탈락 사유", REJECT_REASON_OPTIONS)
 
-        st.subheader("원가/배송비")
+        st.subheader("도매 원가/배송비")
 
         b1, b2, b3 = st.columns(3)
 
@@ -556,12 +575,12 @@ with tabs[1]:
             exchange_rate = st.number_input("환율/환산값", min_value=0.0, value=195.0, step=1.0)
 
         with b2:
-            china_shipping_krw = st.number_input("중국 내 배송비 원/개", min_value=0.0, value=0.0, step=100.0)
-            intl_shipping_krw = st.number_input("국제배송/관부가세 원/개", min_value=0.0, value=2500.0, step=100.0)
+            china_shipping_krw = st.number_input("중국/도매처 내 배송비", min_value=0.0, value=0.0, step=100.0)
+            intl_shipping_krw = st.number_input("국제배송/관부가세", min_value=0.0, value=2500.0, step=100.0)
 
         with b3:
-            domestic_shipping_krw = st.number_input("국내택배/포장비 원/개", min_value=0.0, value=3000.0, step=100.0)
-            extra_cost_krw = st.number_input("기타 비용 원/개", min_value=0.0, value=500.0, step=100.0)
+            domestic_shipping_krw = st.number_input("국내택배/포장비", min_value=0.0, value=3000.0, step=100.0)
+            extra_cost_krw = st.number_input("기타 비용", min_value=0.0, value=500.0, step=100.0)
 
         st.subheader("쿠팡 판매 조건")
 
@@ -579,85 +598,138 @@ with tabs[1]:
             vat_rate = st.number_input("세금 보수 반영 %", min_value=0.0, value=5.0, step=0.5)
             risk_rate = st.number_input("반품/불량 리스크 %", min_value=0.0, value=3.0, step=0.5)
 
-        save_product = st.form_submit_button("판정 계산 후 저장")
+        calculate_product_button = st.form_submit_button("상품 판정하기")
 
-    if save_product:
-        db = get_db()
+    if calculate_product_button:
+        if not product_name.strip():
+            st.error("상품명은 반드시 입력해야 합니다.")
+        else:
+            calc = calculate_product(
+                yuan_price,
+                exchange_rate,
+                china_shipping_krw,
+                intl_shipping_krw,
+                domestic_shipping_krw,
+                extra_cost_krw,
+                coupang_price,
+                coupang_fee_rate,
+                ad_rate,
+                vat_rate,
+                risk_rate,
+                target_margin_rate,
+                competition_level,
+                risk_items
+            )
 
+            current_name = current_user_name()
+
+            st.session_state["pending_product_result"] = {
+                "user_name": current_name,
+                "manager_name": current_name,
+                "created_by": current_name,
+                "updated_by": current_name,
+                "reviewed_by": current_name if final_memo or status != "1차 수집" else "",
+                "product_name": product_name.strip(),
+                "category": category,
+                "source_site": source_site,
+                "source_url": source_url.strip(),
+                "status": status,
+                "product_url_1688": source_url.strip(),
+                "product_url_coupang": product_url_coupang.strip(),
+                "memo": memo,
+                "final_memo": final_memo,
+                "reject_reason": reject_reason,
+                "yuan_price": yuan_price,
+                "exchange_rate": exchange_rate,
+                "china_shipping_krw": china_shipping_krw,
+                "intl_shipping_krw": intl_shipping_krw,
+                "domestic_shipping_krw": domestic_shipping_krw,
+                "extra_cost_krw": extra_cost_krw,
+                "coupang_price": coupang_price,
+                "coupang_fee_rate": coupang_fee_rate,
+                "ad_rate": ad_rate,
+                "vat_rate": vat_rate,
+                "risk_rate": risk_rate,
+                "target_margin_rate": target_margin_rate,
+                "competition_level": competition_level,
+                "risk_items": ", ".join(risk_items),
+                "updated_at": now_iso(),
+                **calc
+            }
+
+    if "pending_product_result" in st.session_state:
+        result = st.session_state["pending_product_result"]
+
+        st.divider()
+        st.subheader("판정 결과")
+
+        r1, r2, r3, r4 = st.columns(4)
+
+        r1.metric("총 원가/개", format_won(result["total_unit_cost"]))
+        r2.metric("실수령 예상/개", format_won(result["net_sales"]))
+        r3.metric("순이익/개", format_won(result["profit"]))
+        r4.metric("마진율", f"{result['margin_rate']:.1f}%")
+
+        r5, r6, r7, r8 = st.columns(4)
+
+        r5.metric("ROI", f"{result['roi_rate']:.1f}%")
+        r6.metric("판정", result["judgment"])
+        r7.metric("소싱처", result["source_site"])
+        r8.metric("담당자", result["manager_name"])
+
+        if result["judgment"] == "강력 후보":
+            st.success("강력 후보입니다. 단, 인증/상표권/배송 리스크는 추가 확인하세요.")
+        elif result["judgment"] == "검토 가능":
+            st.info("검토 가능합니다. 경쟁 상품 리뷰 수, 판매자 수, 상세페이지 난이도를 추가 확인하세요.")
+        elif result["judgment"] == "보류":
+            st.warning("보류입니다. 원가를 낮추거나 판매가/구성을 바꾸지 않으면 애매합니다.")
+        else:
+            st.error("탈락입니다. 현재 조건으로는 수익성이 낮습니다.")
+
+        db = get_supabase_client()
+
+        duplicate_list = []
         if db is not None:
-            if not product_name.strip():
-                st.error("상품명은 반드시 입력해야 합니다.")
-            else:
-                product_url_1688 = product_url_1688.strip()
-                product_url_coupang = product_url_coupang.strip()
+            duplicate_list = duplicate_warnings(
+                db,
+                result.get("source_url", ""),
+                result.get("product_url_coupang", "")
+            )
 
-                warnings = duplicate_warnings(db, product_url_1688, product_url_coupang)
+        allow_duplicate_save = False
 
-                if warnings:
-                    st.error("중복 가능성이 있어서 저장하지 않았습니다.")
-                    for warning in warnings:
-                        st.write(f"- {warning}")
-                else:
-                    calc = calculate_product(
-                        yuan_price,
-                        exchange_rate,
-                        china_shipping_krw,
-                        intl_shipping_krw,
-                        domestic_shipping_krw,
-                        extra_cost_krw,
-                        coupang_price,
-                        coupang_fee_rate,
-                        ad_rate,
-                        vat_rate,
-                        risk_rate,
-                        target_margin_rate,
-                        competition_level,
-                        risk_items
-                    )
+        if duplicate_list:
+            st.warning("중복 가능성이 있습니다. 같은 상품인지 확인하세요.")
+            for item in duplicate_list:
+                st.write(f"- {item}")
 
-                    current_name = current_user_name()
+            allow_duplicate_save = st.checkbox("중복 가능성이 있어도 저장합니다.")
+        else:
+            allow_duplicate_save = True
 
-                    row = {
-                        "user_name": current_name,
-                        "manager_name": current_name,
-                        "created_by": current_name,
-                        "updated_by": current_name,
-                        "reviewed_by": current_name if final_memo or status != "1차 수집" else "",
-                        "product_name": product_name.strip(),
-                        "category": category,
-                        "source_site": source_site,
-                        "source_url": product_url_1688,
-                        "status": status,
-                        "product_url_1688": product_url_1688,
-                        "product_url_coupang": product_url_coupang,
-                        "memo": memo,
-                        "final_memo": final_memo,
-                        "reject_reason": reject_reason,
-                        "yuan_price": yuan_price,
-                        "exchange_rate": exchange_rate,
-                        "china_shipping_krw": china_shipping_krw,
-                        "intl_shipping_krw": intl_shipping_krw,
-                        "domestic_shipping_krw": domestic_shipping_krw,
-                        "extra_cost_krw": extra_cost_krw,
-                        "coupang_price": coupang_price,
-                        "coupang_fee_rate": coupang_fee_rate,
-                        "ad_rate": ad_rate,
-                        "vat_rate": vat_rate,
-                        "risk_rate": risk_rate,
-                        "target_margin_rate": target_margin_rate,
-                        "competition_level": competition_level,
-                        "risk_items": ", ".join(risk_items),
-                        "updated_at": now_iso(),
-                        **calc
-                    }
+        col_save, col_clear = st.columns(2)
 
-                    try:
-                        db.table("product_records").insert(row).execute()
-                        st.success(f"저장 완료. 담당자: {current_name}, 판정: {calc['judgment']}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error("상품 저장 실패")
-                        st.code(str(e))
+        with col_save:
+            if st.button("이 판정 저장하기"):
+                db = get_db()
+
+                if db is not None:
+                    if duplicate_list and not allow_duplicate_save:
+                        st.error("중복 가능성이 있습니다. 저장하려면 체크박스를 먼저 눌러주세요.")
+                    else:
+                        try:
+                            db.table("product_records").insert(result).execute()
+                            st.success(f"저장 완료. 담당자: {current_user_name()}, 판정: {result['judgment']}")
+                            del st.session_state["pending_product_result"]
+                            st.rerun()
+                        except Exception as e:
+                            st.error("상품 저장 실패")
+                            st.code(str(e))
+
+        with col_clear:
+            if st.button("판정 결과 지우기"):
+                del st.session_state["pending_product_result"]
+                st.rerun()
 
 
 # =========================
