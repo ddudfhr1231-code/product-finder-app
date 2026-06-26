@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import calendar
 from datetime import date, datetime, timezone
 
 try:
@@ -108,6 +109,12 @@ SOURCE_SITE_OPTIONS = [
     "국내 도매몰",
     "오프라인 도매처",
     "기타"
+]
+
+SOURCE_CURRENCY_OPTIONS = [
+    "중국 위안화(CNY)",
+    "한국 원화(KRW)",
+    "직접 입력"
 ]
 
 
@@ -240,7 +247,7 @@ def fetch_table(table_name, order_col="created_at"):
 
     if db is None:
         return []
-
+        
     try:
         response = (
             db.table(table_name)
@@ -254,6 +261,228 @@ def fetch_table(table_name, order_col="created_at"):
         st.code(str(e))
         return []
 
+
+def get_setting_numeric(setting_id, default_value=0.0):
+    db = get_supabase_client()
+
+    if db is None:
+        return default_value
+
+    try:
+        response = (
+            db.table("app_settings")
+            .select("value_numeric")
+            .eq("id", setting_id)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            return as_float(response.data[0].get("value_numeric"), default_value)
+
+        return default_value
+
+    except Exception:
+        return default_value
+
+
+def save_setting_numeric(setting_id, value, updated_by):
+    db = get_supabase_client()
+
+    if db is None:
+        return False, "Supabase 연결 실패"
+
+    try:
+        db.table("app_settings").upsert({
+            "id": setting_id,
+            "value_text": str(value),
+            "value_numeric": float(value),
+            "updated_by": updated_by,
+            "updated_at": now_iso()
+        }).execute()
+
+        return True, ""
+
+    except Exception as e:
+        return False, str(e)
+
+
+def get_exchange_rate_by_currency(source_currency, cny_exchange_rate):
+    if source_currency == "중국 위안화(CNY)":
+        return float(cny_exchange_rate)
+
+    if source_currency == "한국 원화(KRW)":
+        return 1.0
+
+    return float(cny_exchange_rate)
+
+
+def get_date_filtered_df(df, date_col, selected_date):
+    if df.empty or date_col not in df.columns:
+        return pd.DataFrame()
+
+    temp = df.copy()
+    temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce").dt.date
+
+    return temp[temp[date_col] == selected_date]
+
+
+def render_finance_calendar(sales_df, expense_df, purchase_df):
+    st.subheader("재무 달력")
+    st.caption("날짜를 누르면 그날 매출/지출/구매 내역이 아래에 표시됩니다.")
+
+    today = date.today()
+
+    cal_col1, cal_col2 = st.columns(2)
+
+    with cal_col1:
+        selected_year = st.number_input(
+            "연도",
+            min_value=2020,
+            max_value=2100,
+            value=today.year,
+            step=1
+        )
+
+    with cal_col2:
+        selected_month = st.selectbox(
+            "월",
+            list(range(1, 13)),
+            index=today.month - 1
+        )
+
+    selected_year = int(selected_year)
+    selected_month = int(selected_month)
+
+    daily_totals = {}
+
+    if not sales_df.empty and "sale_date" in sales_df.columns:
+        temp_sales = sales_df.copy()
+        temp_sales["sale_date"] = pd.to_datetime(temp_sales["sale_date"], errors="coerce").dt.date
+
+        for _, row in temp_sales.iterrows():
+            d = row.get("sale_date")
+            if pd.isna(d):
+                continue
+
+            key = str(d)
+
+            if key not in daily_totals:
+                daily_totals[key] = {"income": 0, "outgo": 0}
+
+            daily_totals[key]["income"] += as_float(row.get("gross_sales"), 0)
+
+    if not expense_df.empty and "expense_date" in expense_df.columns:
+        temp_expense = expense_df.copy()
+        temp_expense["expense_date"] = pd.to_datetime(temp_expense["expense_date"], errors="coerce").dt.date
+
+        for _, row in temp_expense.iterrows():
+            d = row.get("expense_date")
+            if pd.isna(d):
+                continue
+
+            key = str(d)
+
+            if key not in daily_totals:
+                daily_totals[key] = {"income": 0, "outgo": 0}
+
+            daily_totals[key]["outgo"] += as_float(row.get("amount"), 0)
+
+    if not purchase_df.empty and "purchase_date" in purchase_df.columns:
+        temp_purchase = purchase_df.copy()
+        temp_purchase["purchase_date"] = pd.to_datetime(temp_purchase["purchase_date"], errors="coerce").dt.date
+
+        for _, row in temp_purchase.iterrows():
+            d = row.get("purchase_date")
+            if pd.isna(d):
+                continue
+
+            key = str(d)
+
+            if key not in daily_totals:
+                daily_totals[key] = {"income": 0, "outgo": 0}
+
+            daily_totals[key]["outgo"] += as_float(row.get("total_purchase_cost"), 0)
+
+    st.divider()
+
+    weekday_cols = st.columns(7)
+    weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+
+    for i, day_name in enumerate(weekdays):
+        weekday_cols[i].markdown(f"**{day_name}**")
+
+    month_calendar = calendar.monthcalendar(selected_year, selected_month)
+
+    for week in month_calendar:
+        cols = st.columns(7)
+
+        for i, day_num in enumerate(week):
+            if day_num == 0:
+                cols[i].write("")
+                continue
+
+            current_date = date(selected_year, selected_month, day_num)
+            date_key = str(current_date)
+
+            income = daily_totals.get(date_key, {}).get("income", 0)
+            outgo = daily_totals.get(date_key, {}).get("outgo", 0)
+
+            label = f"{day_num}\n+{int(income):,}\n-{int(outgo):,}"
+
+            if cols[i].button(label, key=f"finance_day_{date_key}"):
+                st.session_state["selected_finance_date"] = date_key
+
+    if "selected_finance_date" not in st.session_state:
+        st.session_state["selected_finance_date"] = str(today)
+
+    selected_date = datetime.strptime(
+        st.session_state["selected_finance_date"],
+        "%Y-%m-%d"
+    ).date()
+
+    st.divider()
+    st.subheader(f"{selected_date} 상세 내역")
+
+    selected_sales = get_date_filtered_df(sales_df, "sale_date", selected_date)
+    selected_expenses = get_date_filtered_df(expense_df, "expense_date", selected_date)
+    selected_purchases = get_date_filtered_df(purchase_df, "purchase_date", selected_date)
+
+    income_total = (
+        selected_sales["gross_sales"].sum()
+        if not selected_sales.empty and "gross_sales" in selected_sales.columns
+        else 0
+    )
+
+    expense_total = (
+        selected_expenses["amount"].sum()
+        if not selected_expenses.empty and "amount" in selected_expenses.columns
+        else 0
+    )
+
+    purchase_total = (
+        selected_purchases["total_purchase_cost"].sum()
+        if not selected_purchases.empty and "total_purchase_cost" in selected_purchases.columns
+        else 0
+    )
+
+    d1, d2, d3, d4 = st.columns(4)
+
+    d1.metric("수입", format_won(income_total))
+    d2.metric("일반 지출", format_won(expense_total))
+    d3.metric("샘플/구매 지출", format_won(purchase_total))
+    d4.metric("일 기준 잔액", format_won(income_total - expense_total - purchase_total))
+
+    st.markdown("#### 매출 내역")
+    show_df(selected_sales, "선택일매출")
+
+    st.markdown("#### 일반 지출 내역")
+    show_df(selected_expenses, "선택일지출")
+
+    st.markdown("#### 샘플/구매 지출 내역")
+    show_df(selected_purchases, "선택일구매")
+
+    return selected_date
 
 def to_df(records):
     if not records:
@@ -445,6 +674,7 @@ purchase_df = to_df(purchases)
 sales_df = to_df(sales)
 expense_df = to_df(expenses)
 
+cny_exchange_rate = get_setting_numeric("cny_exchange_rate", 195.0)
 
 tabs = st.tabs([
     "대시보드",
@@ -453,7 +683,9 @@ tabs = st.tabs([
     "샘플/구매",
     "매출",
     "지출",
-    "월별 손익"
+    "재무 달력",
+    "월별 손익",
+    "설정"
 ])
 
 
@@ -571,8 +803,36 @@ with tabs[1]:
         b1, b2, b3 = st.columns(3)
 
         with b1:
+            source_currency = st.selectbox("원가 통화", SOURCE_CURRENCY_OPTIONS)
             yuan_price = st.number_input("도매 원가", min_value=0.0, value=10.0, step=1.0)
-            exchange_rate = st.number_input("환율/환산값", min_value=0.0, value=195.0, step=1.0)
+
+            if source_currency == "중국 위안화(CNY)":
+                exchange_rate = st.number_input(
+                    "환율/환산값",
+                    min_value=0.0,
+                    value=float(cny_exchange_rate),
+                    step=1.0,
+                    disabled=True
+                )
+                st.caption("설정 탭의 중국 위안화 환율이 자동 적용됩니다.")
+
+            elif source_currency == "한국 원화(KRW)":
+                exchange_rate = st.number_input(
+                    "환율/환산값",
+                    min_value=0.0,
+                    value=1.0,
+                    step=1.0,
+                    disabled=True
+                )
+                st.caption("국내 도매 상품은 원화 기준이라 1로 계산합니다.")
+
+            else:
+                exchange_rate = st.number_input(
+                    "환율/환산값 직접 입력",
+                    min_value=0.0,
+                    value=float(cny_exchange_rate),
+                    step=1.0
+                )
 
         with b2:
             china_shipping_krw = st.number_input("중국/도매처 내 배송비", min_value=0.0, value=0.0, step=100.0)
@@ -632,6 +892,7 @@ with tabs[1]:
                 "product_name": product_name.strip(),
                 "category": category,
                 "source_site": source_site,
+                "source_currency": source_currency,
                 "source_url": source_url.strip(),
                 "status": status,
                 "product_url_1688": source_url.strip(),
@@ -802,6 +1063,7 @@ with tabs[2]:
             "product_name",
             "category",
             "source_site",
+            "source_currency",
             "source_url",
             "manager_name",
             "created_by",
@@ -892,8 +1154,48 @@ with tabs[2]:
             n1, n2, n3 = st.columns(3)
 
             with n1:
-                edit_yuan = st.number_input("1688 원가", min_value=0.0, value=as_float(selected.get("yuan_price"), 0), step=1.0)
-                edit_exchange = st.number_input("환율", min_value=0.0, value=as_float(selected.get("exchange_rate"), 195), step=1.0)
+                edit_source_currency = st.selectbox(
+                    "원가 통화",
+                    SOURCE_CURRENCY_OPTIONS,
+                    index=safe_select_index(
+                        SOURCE_CURRENCY_OPTIONS,
+                        as_text(selected.get("source_currency"), "중국 위안화(CNY)"),
+                        0
+                    )
+                )
+
+                edit_yuan = st.number_input(
+                    "도매 원가",
+                    min_value=0.0,
+                    value=as_float(selected.get("yuan_price"), 0),
+                    step=1.0
+                )
+
+                if edit_source_currency == "중국 위안화(CNY)":
+                    edit_exchange = st.number_input(
+                        "환율/환산값",
+                        min_value=0.0,
+                        value=float(cny_exchange_rate),
+                        step=1.0,
+                        disabled=True
+                    )
+
+                elif edit_source_currency == "한국 원화(KRW)":
+                    edit_exchange = st.number_input(
+                        "환율/환산값",
+                        min_value=0.0,
+                        value=1.0,
+                        step=1.0,
+                        disabled=True
+                    )
+
+                else:
+                    edit_exchange = st.number_input(
+                        "환율/환산값 직접 입력",
+                        min_value=0.0,
+                        value=as_float(selected.get("exchange_rate"), float(cny_exchange_rate)),
+                        step=1.0
+                    )
 
             with n2:
                 edit_china_ship = st.number_input("중국 내 배송비", min_value=0.0, value=as_float(selected.get("china_shipping_krw"), 0), step=100.0)
@@ -938,6 +1240,7 @@ with tabs[2]:
                     "product_name": edit_name,
                     "category": edit_category,
                     "source_site": edit_source_site,
+                    "source_currency": edit_source_currency,
                     "source_url": edit_url_1688.strip(),
                     "status": edit_status,
                     "reject_reason": edit_reject,
@@ -1272,12 +1575,22 @@ with tabs[5]:
                     st.error("삭제 실패")
                     st.code(str(e))
 
+# =========================
+# 7. 재무 달력
+# =========================
+
+with tabs[6]:
+    st.title("재무 달력")
+    st.caption("매출은 +, 일반 지출과 샘플/구매 지출은 -로 표시합니다.")
+
+    render_finance_calendar(sales_df, expense_df, purchase_df)
+
 
 # =========================
 # 7. 월별 손익
 # =========================
 
-with tabs[6]:
+with tabs[7]:
     st.title("월별 손익")
     st.caption("매출, 샘플/구매비, 일반 지출을 월별로 합산합니다. 세무 신고용이 아니라 사업 판단용입니다.")
 
@@ -1393,3 +1706,40 @@ with tabs[6]:
 
         st.caption("현금기준손익 = 총매출 - 샘플구매비 - 일반지출")
         st.caption("사업판단순이익 = 판매순이익 - 일반지출")
+
+
+# =========================
+# 9. 설정
+# =========================
+
+with tabs[8]:
+    st.title("설정")
+    st.caption("앱 전체에 적용되는 기본값을 관리합니다.")
+
+    st.subheader("환율 설정")
+
+    st.info("중국 위안화(CNY)를 선택한 상품 판정에는 아래 환율이 자동 적용됩니다. 국내 도매 상품은 원화 기준이므로 환율/환산값이 1로 계산됩니다.")
+
+    with st.form("settings_form"):
+        new_cny_rate = st.number_input(
+            "중국 위안화 환율/환산값",
+            min_value=0.0,
+            value=float(cny_exchange_rate),
+            step=1.0
+        )
+
+        save_settings = st.form_submit_button("설정 저장")
+
+    if save_settings:
+        ok, error_message = save_setting_numeric(
+            "cny_exchange_rate",
+            new_cny_rate,
+            current_user_name()
+        )
+
+        if ok:
+            st.success(f"중국 위안화 환율이 {new_cny_rate}로 저장되었습니다.")
+            st.rerun()
+        else:
+            st.error("설정 저장 실패")
+            st.code(error_message)
