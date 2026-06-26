@@ -10,7 +10,7 @@ except Exception:
 
 
 st.set_page_config(
-    page_title="상품 소싱 운영툴",
+    page_title="상품 소싱 운영툴이자 개쎈거",
     page_icon="📦",
     layout="wide"
 )
